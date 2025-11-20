@@ -136,41 +136,27 @@ def splitstep_gpe_2d(psi0, V, g, dt, T, x, y, KX, KY, K2):
 
     return psi, t_hist, mass_hist, energy_hist
 
-# Commented out IPython magic to ensure Python compatibility.
 def run_experiment():
     # ----- configuration -----
     L = 10.0
     nx = ny = 64
-    omega = 0.2           # harmonic trap frequency
+    omega = 0.2          
     T = 2.0
     dt_list = [0.01, 0.04, 0.08]
     regimes = [("linear", 0.0), ("nonlinear", 50.0)]
-
-    # ----- grid and potential -----
     x, y, X, Y, dx, dy = build_grid(L=L, nx=nx, ny=ny)
     V = 0.5 * omega ** 2 * (X ** 2 + Y ** 2)
-
-    # ----- spectral operators (reused for all runs) -----
     KX, KY, K2 = build_spectral_operators(nx, ny, dx, dy)
-
-    # ----- initial data -----
     psi0 = initial_wavepacket(x, y)
     M0 = compute_mass(psi0, dx, dy)
     print("Initial mass M0 = %.16f" % M0)
-
-    # store results
     results = []
-
-    # ----- loop over regimes and dt -----
     for regime_name, g in regimes:
         print("\nRegime: %s (g = %.3f)" % (regime_name, g))
         for dt in dt_list:
             t_start = time.perf_counter()
-
             psiT, t_hist, mass_hist, energy_hist = splitstep_gpe_2d(
-                psi0, V, g, dt, T, x, y, KX, KY, K2
-            )
-
+                psi0, V, g, dt, T, x, y, KX, KY, K2)
             cpu = time.perf_counter() - t_start
             max_mass_err = float(np.max(np.abs(mass_hist - M0)))
             E0 = float(energy_hist[0])
@@ -201,9 +187,8 @@ def run_experiment():
                 save_plots_for_run(regime_name, dt, x, y,
                                    psiT, t_hist, mass_hist, energy_hist)
 
-    # ----- write summary files -----
     write_summary(results)
-    print("\nSummary written to results_summary.txt and results_summary.csv")
+    print("\nSummary in results_summary.txt and results_summary.csv")
 
 def save_plots_for_run(regime_name, dt, x, y, psiT, t_hist, mass_hist, energy_hist):
     """Save density, mass, and energy plots for a single run (one regime, one dt)."""
@@ -241,7 +226,6 @@ def save_plots_for_run(regime_name, dt, x, y, psiT, t_hist, mass_hist, energy_hi
     plt.savefig(fname_energy, dpi=150)
     plt.close()
 
-# Commented out IPython magic to ensure Python compatibility.
 def write_summary(results):
     """Write plain-text and CSV summary of all runs."""
     # text file
@@ -264,7 +248,6 @@ def write_summary(results):
                 )
             )
 
-    # CSV file
     with open("results_summary.csv", "w", newline="") as fcsv:
         writer = csv.writer(fcsv)
         writer.writerow(
