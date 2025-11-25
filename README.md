@@ -1,151 +1,224 @@
-This code solves the 2D Schrödinger / Gross–Pitaevskii equation on a square periodic grid with a harmonic trap. The same solver is run for two parameter choices:
-- **Linear Schrödinger**: `g = 0` - no interaction
-- **Nonlinear Gross–Pitaevskii (GPE)**: `g = 50` - repulsive interaction
+# GPEin2D – 2D Schrödinger / Gross–Pitaevskii Split–Step Fourier Solver
 
-In both cases the initial condition is a normalized Gaussian wavepacket.
-Time-stepping is performed with a 2D split–step Fourier (Strang splitting) method.
+MATH 519 – Scientific Computing  
+Author: Roza Abdrakhmanova  
 
+This repository contains a compact Python implementation of a 2D split–step Fourier
+(Strang splitting) solver for the time-dependent Schrödinger / Gross–Pitaevskii
+equation in a harmonic trap, together with scripts to reproduce the numerical
+experiments, figures, LaTeX report and beamer presentation.
 
-## 1. Background and context
+The goal is not only to “simulate something”, but to **verify** the numerical
+method and quantify the **accuracy–cost trade-off** in both a linear and a
+strongly nonlinear regime on the **same test problem**.
 
-### Schrödinger equation vs Gross–Pitaevskii equation
+---
 
-The time-dependent Schrödinger equation is the basic evolution law of nonrelativistic quantum mechanics. In the simplest form,
+## 1. Model
 
-```math
-i \partial_t \psi = \left(-\tfrac12 \Delta + V(x,y)\right)\psi ,
-```
-
-it describes the wavefunction $\psi(t,x,y)$ of a single particle moving in a potential $V(x,y)$.
-
-The Gross–Pitaevskii equation (GPE) is a nonlinear variant used for Bose–Einstein condensates (BECs). At very low temperatures, many bosons occupy the same quantum state and can be modeled by a single macroscopic wavefunction whose dynamics is
-
-```math
-i \partial_t \psi = \left(-\tfrac12 \Delta + V(x,y) + g\lvert\psi\rvert^2\right)\psi .
-```
-
-The extra term $g\lvert\psi\rvert^2\psi$ encodes mean-field interactions between particles:
-
-- $g = 0$ → purely linear Schrödinger dynamics.
-- $g > 0$ → repulsive condensate; high density costs energy and the cloud tends to spread.
-
-This project does not try to be physically exact, but it uses a standard GPE-type model which is widely studied in mathematical physics and computational PDEs.
-
-### Harmonic trap and Gaussian wavepacket
-
-Real BECs are typically held in magnetic or optical harmonic traps, which are well-approximated by
-
-```math
-V(x,y) = \tfrac12 \omega^2 (x^2 + y^2).
-```
-
-Here we choose a mild trap strength $\omega = 0.2$ so that the wavepacket stays inside the computational domain but still “feels” the confining potential.
-
-The initial condition is a Gaussian wavepacket, i.e. a localized bump with a built-in plane-wave phase:
-
-- localized near $(x_0,y_0) = (-3,0)$,
-- width $\sigma = 1$,
-- carrier wavenumber $(k_{x0},k_{y0}) = (2,0)$.
-
-This is a classical test case in the Schrödinger/GPE literature because:
-
-- The Gaussian is smooth and rapidly decaying → well-suited to spectral methods.
-- The packet is initially displaced from the center of the trap → it moves and oscillates in time, so we see nontrivial dynamics instead of a static picture.
-- For $g = 0$, the qualitative behavior (oscillation in the harmonic well) is well understood, providing a sanity check for the numerics.
-
-### Rationale of choosing these parameters:
-
-- **Domain size:** $L = 10$. With the chosen trap and initial packet, essentially all significant mass lies in $[-10,10]^2$; periodic boundary conditions are therefore harmless.
-- **Grid:** $64 \times 64$. This is enough to resolve the Gaussian and the potential while keeping run-times below one second on a laptop.
-- **Time steps:** $\Delta t \in \{0.01, 0.04, 0.08\}$ up to $T = 2.0$.  
-  These values show a clear accuracy–cost trade-off without making the scheme unstable.
-- **Nonlinearity strength:** $g = 50$. This is strong enough that the nonlinear case is visibly different from the linear one (the condensate spreads and flattens), but not so strong that the numerics become delicate.
-
- this setup is a compact prototype of a dispersive nonlinear equation with:
-- smooth solution,
-- nontrivial potential,
-- conserved invariants (mass and energy),
-- and parameter regimes where linear and nonlinear dynamics can be compared.
-
-
-
-## 2. PDE model
-
-Solve
-
-```math
+We solve, on a square domain \(\Omega=[-L,L]^2\),
+the 2D Gross–Pitaevskii equation with periodic boundary conditions:
+\[
 i \partial_t \psi(t,x,y)
-= \left( -\tfrac12 \Delta + V(x,y) + g \lvert\psi\rvert^2 \right) \psi,
-\quad (x,y)\in[-L,L]^2,\ L=10,
-```
+= -\tfrac12 \Delta \psi(t,x,y)
+  + V(x,y)\psi(t,x,y)
+  + g|\psi(t,x,y)|^2\psi(t,x,y).
+\]
 
+- Domain half-width: \(L = 10\).
+- Harmonic trap:
+  \[
+  V(x,y) = \tfrac12 \omega^2(x^2 + y^2), \quad \omega = 0.2.
+  \]
+- Final time: \(T = 2\).
+- Regimes:
+  - Linear Schrödinger: \(g = 0\).
+  - Nonlinear GPE: \(g = 50\) (strongly defocusing).
+
+### Invariants
+
+Continuous invariants used for verification:
+
+- Mass:
+  \[
+  M(t) = \int_{\Omega} |\psi(t,x,y)|^2\,dx\,dy.
+  \]
+- Energy:
+  \[
+  E(t) = \int_{\Omega} \Big(
+      \tfrac12|\nabla\psi|^2 + V|\psi|^2 + \tfrac12 g|\psi|^4
+    \Big)\,dx\,dy.
+  \]
+
+The exact dynamics conserves both \(M\) and \(E\) for \(g=0\) and \(g>0\).  
+The code monitors discrete versions \(M^n, E^n\) to verify the implementation.
+
+### Initial data (shared test for both regimes)
+
+A normalized Gaussian wavepacket with phase:
+\[
+\psi_0(x,y)
+= C\exp\! \Big(
+   -\frac{(x-x_0)^2 + (y-y_0)^2}{2\sigma^2}
+  \Big)
+  \exp\big(i(k_{x0}x + k_{y0}y)\big),
+\]
 with
+- \(x_0=-3\), \(y_0=0\),
+- \(\sigma=1\),
+- \(k_{x0}=2\), \(k_{y0}=0\).
 
-```math
-V(x,y) = \tfrac12 \omega^2 (x^2 + y^2), \quad \omega = 0.2.
-```
+The constant \(C\) is chosen so that the **discrete** mass \(M^0\approx 1\).
+The same \(\psi_0\), domain and \(T\) are used for \(g=0\) and \(g=50\).
 
-Boundary conditions: periodic on the square computational domain.
+---
 
-Initial data: normalized Gaussian wavepacket centered at $(x_0,y_0)=(-3,0)$ with width $\sigma=1$ and carrier wavenumber $(k_{x0},k_{y0})=(2,0)$.
+## 2. Numerical Method
 
-Invariants of interest:
+### Spatial discretization
 
-```math
-M(t) = \iint \lvert\psi\rvert^2 \, dx\,dy,
-```
+- Grid: \(N_x=N_y=64\) uniform points on \([-L,L]^2\), periodic.
+- Spectral (pseudo-spectral) differentiation via 2D FFT:
+  - Compute \(\widehat{\psi}=\mathcal{F}[\psi]\).
+  - Apply multipliers in Fourier space:
+    - \(-\Delta \psi \leftrightarrow |k|^2\widehat{\psi}\),
+    - \(\partial_x\psi \leftrightarrow ik_x\widehat{\psi}\),
+    - \(\partial_y\psi \leftrightarrow ik_y\widehat{\psi}\).
 
-```math
-E(t) = \iint \Big[\tfrac12 \lvert\nabla\psi\rvert^2 + V\lvert\psi\rvert^2
-      + \tfrac{g}{2}\lvert\psi\rvert^4\Big] dx\,dy.
-```
+Discrete mass:
+\[
+M^n = \sum_{j,k} |\psi^n_{j,k}|^2\,\Delta x\,\Delta y.
+\]
 
+Discrete energy:
+\[
+E^n = \sum_{j,k}
+\Big(
+\tfrac12|\nabla_h\psi^n|^2_{j,k}
++ V_{j,k}|\psi^n_{j,k}|^2
++ \tfrac12 g|\psi^n_{j,k}|^4
+\Big)\Delta x\Delta y,
+\]
+where \(\nabla_h\psi^n\) is computed spectrally.
 
-## 3. Numerical method
+### Time stepping: split–step Fourier (Strang splitting)
 
-- Spatial discretization: uniform grid $64 \times 64$ on $[-L, L]^2$, periodic.
-- Derivatives via spectral differentiation using FFT (`numpy.fft`).
-- Time discretization: split–step Fourier (also called strang splitting):
+We write
+\[
+i\partial_t\psi = (A + B(\psi))\psi,
+\]
+with
+- \(A\psi = -\tfrac12\Delta\psi\) (kinetic),
+- \(B(\psi) = (V+g|\psi|^2)\) (potential + nonlinearity).
 
-  1. Half-step kinetic in Fourier space,
-  2. Full-step potential + nonlinearity in physical space,
-  3. Half-step kinetic in Fourier space.
+One Strang step from \(t^n\) to \(t^{n+1}=t^n+\Delta t\):
+\[
+\psi^{n+1} \approx
+e^{-i\frac{\Delta t}{2}A}\,
+e^{-i\Delta t B(\psi^n)}\,
+e^{-i\frac{\Delta t}{2}A}\,\psi^n.
+\]
 
-- Time steps: $\Delta t = 0.01, 0.04, 0.08$ up to final time $T = 2.0$.
+Implemented as:
+1. Half kinetic step in Fourier space:
+   \[
+   \widehat{\psi}^{n+1/2}
+   = \exp\!\big(-i\tfrac{\Delta t}{4}|k|^2\big)\,\widehat{\psi}^n.
+   \]
+2. Full potential/nonlinear step in physical space:
+   \[
+   \psi^{*}(x,y)
+   = \exp\!\big(-i\Delta t(V(x,y)+g|\psi^{n+1/2}|^2)\big)\,\psi^{n+1/2}(x,y).
+   \]
+3. Second half kinetic step:
+   \[
+   \widehat{\psi}^{n+1}
+   = \exp\!\big(-i\tfrac{\Delta t}{4}|k|^2\big)\,\widehat{\psi}^{*}.
+   \]
 
-For each $(g, \Delta t)$ we record:
+The method is formally **second order in time** for smooth solutions.
 
-- mass history $M(t)$,
-- energy history $E(t)$,
-- CPU time,
-- maximum mass error $\max_t \lvert M(t) - M(0)\rvert$,
-- energy drift $\lvert E(T) - E(0)\rvert$.
+---
 
+## 3. Experiments and Verification
 
+Two experiment types are implemented.
 
-## 4.Programming language and libraries:
+### 3.1 Experiment A – Invariants and CPU cost
 
-- Python 3
-- `numpy`
-- `matplotlib`
+For each regime \(g\in\{0,50\}\) and
+\[
+\Delta t\in\{0.01,0.04,0.08\}
+\]
+we integrate up to \(T=2\) and record:
+- discrete mass \(M^n\),
+- discrete energy \(E^n\),
+- CPU time for one run.
 
+Findings:
+- Mass conservation:  
+  \(\max_n |M^n-M^0|\lesssim 10^{-13}\) for all runs (round-off level).
+- Energy:
+  - \(g=0\): relative final energy error \(\sim 10^{-8}\).
+  - \(g=50\): relative final energy error \(\sim 10^{-4}\) for \(\Delta t=0.01\),
+    larger for coarser \(\Delta t\), but monotone improvement as \(\Delta t\) decreases.
+- CPU time:
+  - Scales approximately like \(T/\Delta t\).
+  - Linear and nonlinear runs have nearly identical cost (FFTs dominate).
 
-## 5. Main files
+**Important:** The CPU vs \(\Delta t\) plot is a **cost model at different time
+resolutions**, not an algorithmic speedup curve. No parallelization is used.
 
-- `project_gpe2d.py` – main script: grid setup, solver implementation, experiments, plotting, CSV export.
-- `results_summary.txt` – human-readable summary table (CPU time, mass/energy errors).
-- `results_summary.csv` – same data in CSV format for post-processing.
-- `density_*.png`, `mass_*.png`, `energy_*.png` – figures used in the report and Beamer slides.
+### 3.2 Experiment B – Temporal convergence vs reference solution
 
+For each regime:
 
-## 6. Results (short)
+1. Compute a refined reference solution
+   with \(\Delta t_{\text{ref}}=0.005\) up to \(T=2\).
+2. For \(\Delta t\in\{0.01,0.02,0.04,0.08\}\), compute
+   \[
+   e_{L^2}(\Delta t)
+   = \big\|\psi_{\Delta t}(\cdot,T)
+         -\psi_{\Delta t_{\text{ref}}}(\cdot,T)\big\|_{L^2}.
+   \]
+3. Plot \(e_{L^2}(\Delta t)\) vs \(\Delta t\) in log–log scale.
 
-- Initial mass: `M(0) ≈ 1.0`.
-- For all runs, `max |M(t) - M(0)|` is at machine precision level (`10^{-14}`), so the method is numerically mass-conservative.
-- In the **linear** regime (`g = 0`) the energy drift stays below `5.3 × 10^{-6}` even for the largest time step `dt = 0.08`.
-- In the **nonlinear** regime (`g = 50`) the energy drift grows with `dt`:
-  - ≈ `9.7 × 10^{-4}` for `dt = 0.01`,
-  - ≈ `1.6 × 10^{-2}` for `dt = 0.04`,
-  - ≈ `7.7 × 10^{-2}` for `dt = 0.08`.
+Results:
 
-This illustrates the accuracy–cost trade-off: smaller `dt` yields better conservation of invariants, larger `dt` is faster but less accurate.
+- \(g=0\):  
+  \(e_{L^2}(0.08)\approx 10^{-4}\),  
+  \(e_{L^2}(0.04)\approx 10^{-5}\),  
+  \(e_{L^2}(0.02)\approx 10^{-6}\).  
+  Ratios \(\approx 4\) → observed order \(\approx 2\).
+
+- \(g=50\):  
+  \(e_{L^2}(0.08)\approx 2\times 10^{-2}\),  
+  \(e_{L^2}(0.04)\approx 4\times 10^{-3}\),  
+  \(e_{L^2}(0.02)\approx 9\times 10^{-4}\),  
+  \(e_{L^2}(0.01)\approx 2\times 10^{-4}\).  
+  Again ratios \(\approx 4\) → second order.
+
+Thus, the implementation passes a standard **verification test**:
+second-order time convergence against a more refined numerical solution
+for both linear and nonlinear regimes.
+
+---
+
+## 4. Linear vs Nonlinear Tests (Illustrations)
+
+Using the **same test problem** (domain, trap, initial data, \(T\)):
+
+- In the linear case (\(g=0\)):
+  - The packet stays tightly localized under the trap,
+    with a bell-shaped density.
+  - Coarse vs fine time-step error is localized near the core
+    and very small (\(\sim 10^{-5}\)).
+
+- In the nonlinear case (\(g=50\)):
+  - The density spreads over a broader region with lower peak value
+    (repulsive interaction).
+  - Coarse vs fine error is larger (\(\sim 10^{-3}\)) and more spread out.
+
+This shows that the **same** \(\Delta t\) is much more damaging in the nonlinear case,
+even though the scheme remains second order.
+
